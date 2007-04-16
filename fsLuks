@@ -1,0 +1,365 @@
+#!/bin/bash
+
+# fsLuks
+# {create|open|dump|close} LUKS partition in {device|file}
+# location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
+# license: GNU GPL
+# author: webadm at dvgu dot ru
+# version: 1.0.1
+# date: 2007-04-16
+
+# config
+A_ISO_MEDIA_SIZE=(737280000 4700000000 9400000000)	# size (bytes) for CD, DVD, DVD DL respectively, in ascending order
+							# remove unacceptable sizes
+OPTS_CRYPTSETUP_FORMAT="--batch-mode"			# luksFormat options, "-c aes-cbc-essiv:sha256 -s 128" is default
+A_FS_TYPES=("iso9660" "ext3" "vfat")			# supported fstype names array
+A_OPTS_LOSETUP=("-r" "" "")				# fstype-specific losetup options, coherently to A_FS_TYPES
+A_OPTS_CRYPTSETUP_OPEN=("--readonly" "" "")		# fstype-specific luksOpen options, coherently to A_FS_TYPES
+A_OPTS_MKFS=(						# fstype-specific mkfs options, coherently to A_FS_TYPES
+  "-quiet -allow-leading-dots -joliet-long -iso-level 3 -l -J -r"
+  ""
+  "-F 32"
+)
+A_OPTS_FSCK=("" "" "-- -atvV")				# fstype-specific fsck options, coherently to A_FS_TYPES
+A_OPTS_MOUNT=(						# fstype-specific mount options, coherently to A_FS_TYPES
+  "-o iocharset=utf8,noatime,nodev,noexec,nosuid,ro,unhide,utf8"
+  ""
+  "-o async,codepage=866,dmask=0022,fmask=0133,iocharset=utf8,nodev,noexec,nosuid,showexec,shortname=lower,utf8"
+)
+
+# vars
+DEV_LOOP=""						# loop device
+ACTION=""						# create=0, open=1, dump=2, close=3
+
+# functions
+
+function Explain_And_Exit () {
+  local SCRIPT_NAME=$(basename $0)
+  echo  "{create|open|dump|close} LUKS partition in {device|file}
+
+Usage:
+    $SCRIPT_NAME [{--help|-h|-?}] [{--verbose|-v}] options_and_parameters
+
+Options and parameters:
+    --create map, -n map
+	Create new LUKS partition and assign it to /dev/mapper/map
+    --open map, -o map
+	Open existing LUKS partition and assign it to /dev/mapper/map
+    --dump map, -p map
+	Dump various meta information about LUKS partition assigned to /dev/mapper/map
+    --close map, -c map
+	Umount /dev/mapper/map and close LUKS partition
+    --data, -d
+	Some LUKS partition data parameters, action-dependent:
+	--data sdir ifile
+	    Create iso9660 LUKS partition in ifile image file from sdir source directory.
+	    ifile size will be one of: ${A_ISO_MEDIA_SIZE[@]} (bytes)
+	--data fsize ifile
+	    Create non-iso9660 LUKS partition in ifile image file of size fsize (bytes). fsize may
+	    have optional case-insensitive multiplicative suffix: K 1024, M 1024*1024, G 1024*1024*1024
+	--data dev
+	    Create non-iso9660 or open or dump or close LUKS partition in dev device
+	--data ifile
+	    Open or dump or close LUKS partition in ifile image file
+    --mount mdir, -m mdir
+	Mount LUKS partition to mdir directory. Required for create or open action
+    --fstype fsname, -t fsname
+	Filesystem type name. Required for create or open action. May be one of: ${A_FS_TYPES[@]}
+    --key kfile, -k kfile
+	Passphrase containing file. Required for create or open action. if not specified, passphrase will be asked
+	
+Examples:
+    $SCRIPT_NAME --create cdrom --data /dir  iso.image  --mount /mnt --key secret.txt
+    $SCRIPT_NAME --create encfs --data 1440k vfat.image --mount /mnt --fstype vfat
+    $SCRIPT_NAME --create flash --data       /dev/sda1  --mount /mnt --fstype ext3
+    $SCRIPT_NAME --open   encfs --data       ext3.image --mount /mnt --fstype ext3
+    $SCRIPT_NAME --open   fd0   --data       /dev/fd0   --mount /mnt --fstype vfat" >&2
+  exit 1
+}
+
+# output $1, release resources occupied, exit
+function Exit () {
+  echo "Failed$1" >&2;
+  if [ -n "$ACTION" ]; then
+    LUKS_Close
+    [ $ACTION -eq 0 -a -n "$FILE_IMAGE" ] && rm -f "$FILE_IMAGE"
+  fi
+  exit 2;
+}
+
+# print $1 or "Ok". if $2 != "-n" then print LF
+function Notify () { (($VERBOSE)) && echo $2 "${1:-Ok}" >&2; return 0; }
+
+# locate $1 in A_FS_TYPES array and set global var $FS_TYPE, or exit
+function Fs_Type_Detect () {
+  Notify "Is fstype $1 supported?: " -n
+  for (( i=0 ; i < ${#A_FS_TYPES[@]} ; ++i )) ; do
+    [ "$1" == "${A_FS_TYPES[$i]}" ] && FS_TYPE=$i && break
+  done
+  [ -n "$FS_TYPE" ] && Notify || Exit
+}
+
+# set global var $PASSPHRASE
+function Ask_Passphrase () {
+  local PASSPHRASE_2 TIMEOUT=300 MSG_TIMEOUT=": timeout exceeded"$'\x0a'
+  read -p "Enter passphrase, please: " -s -t $TIMEOUT PASSPHRASE || Exit "$MSG_TIMEOUT"
+  [ -n "$PASSPHRASE" ] || Exit ": passphrase is empty"
+  if (($ACTION == 0)); then
+    read -p "Verify passphrase, please: " -s -t $TIMEOUT PASSPHRASE_2 || Exit "$MSG_TIMEOUT"
+    [ "$PASSPHRASE" == "$PASSPHRASE_2" ] || Exit ": passphrases are not match"
+  fi
+}
+
+# attach $FILE_IMAGE to free loop device with option $1, set global var $DEV_LOOP; requires global var $FILE_IMAGE
+function DevLoop_Init () {
+  if [ -z "$DEV_LOOP" ]; then
+    Notify "Look for free loop device: " -n
+    for i in /dev/loop*; do
+      if ! losetup $i > /dev/null 2>&1; then DEV_LOOP=$i; break; fi
+    done
+    [ -n "$DEV_LOOP" ] && Notify || Exit
+  fi
+  Notify "Attach file to loop device: " -n
+  losetup $1 $DEV_LOOP "$FILE_IMAGE" && Notify "$DEV_LOOP" || Exit
+}
+
+# fix cryptsetup bug: "device-mapper: ioctl: unable to remove open device temporary-cryptsetup-PID"
+function Fix_Cryptsetup_Bug () {
+  if [ -n "$DEV_LOOP" ]; then
+    shopt -s nullglob
+    for DEV_LOSTED in /dev/mapper/temporary-cryptsetup-*; do
+      [ "$DEV_LOOP" == "$(cryptsetup status $DEV_LOSTED | egrep -o '/dev/loop[0-9]+$')" ] && cryptsetup luksClose $DEV_LOSTED
+    done
+  fi
+}
+
+# create sparse file of size $1 bytes for LUKS partition, init loop device with option $2; requires global var $FILE_IMAGE
+function LUKS_Allocate () {
+  local FILE_SIZE_BLOCKS=$((($1 - 1) / 512 + 1))
+  Notify "Allocate sparse file of size $(($FILE_SIZE_BLOCKS * 512)) bytes for LUKS device: " -n
+  dd if=/dev/urandom of="$FILE_IMAGE" bs=512 count=2056 > /dev/null 2>&1
+    # 2056x512 is max LUKS header length, corresponding to 256-bit keys
+  dd if=/dev/urandom of="$FILE_IMAGE" bs=512 count=0 seek=$FILE_SIZE_BLOCKS > /dev/null 2>&1
+  [ -s "$FILE_IMAGE" ] && Notify || Exit
+  DevLoop_Init $2
+}
+
+# check LUKS partition $1; open it with options $2; requires global var $DEV_MAP
+function LUKS_Open () {
+  Notify "Check LUKS device: " -n
+  cryptsetup isLuks $1 && Notify || Exit
+  Notify "Open LUKS partition: " -n
+  echo "$PASSPHRASE" | cryptsetup $2${FILE_KEY:+ --key-file "$FILE_KEY"} luksOpen $1 $DEV_MAP && Notify || Exit
+    # cryptsetup ignores stdin if "--key-file" option presented
+  Fix_Cryptsetup_Bug
+}
+
+# format LUKS partition $1; open it with options $2
+function LUKS_Format_And_Open () {
+  Notify "Format LUKS device: " -n
+  echo "$PASSPHRASE" | cryptsetup $OPTS_CRYPTSETUP_FORMAT luksFormat $1 $FILE_KEY && Notify || Exit
+    # $FILE_KEY must be without quotes! cryptsetup ignores stdin if keyfile presented
+  LUKS_Open $1 $2
+}
+
+# requires global vars: $FS_TYPE, $DEV_MAP, $DIR_MOUNT
+function LUKS_Mount () {
+  Notify "Mount LUKS partition: " -n
+  mount -t ${A_FS_TYPES[$FS_TYPE]} ${A_OPTS_MOUNT[$FS_TYPE]} /dev/mapper/$DEV_MAP "$DIR_MOUNT" && Notify || Exit
+}
+
+# silently (since it may be called from Exit) release resources occupied; requires global var $ACTION
+function LUKS_Close () {
+  [ $ACTION -ne 2 -a -n "$DEV_MAP" -a -b "/dev/mapper/$DEV_MAP" ] && cryptsetup luksClose $DEV_MAP
+  [ -n "$DEV_LOOP" ] && losetup -d $DEV_LOOP
+  Fix_Cryptsetup_Bug
+  [ -n "$DEV_LOOP" ] && DEV_LOOP=""
+}
+
+# check
+
+[ "$UID" == "0" ] || Exit ": this script must be run as root"
+(($# > 0)) || Explain_And_Exit
+if ! cryptsetup --help | grep -q luksFormat; then Exit ": LUKS support is required"; fi
+#TODO: check is swap being encrypted?
+
+# parse input params
+
+# - read
+while (($# > 0)); do
+  case "$1" in
+    --verbose|-v)
+      VERBOSE=1
+      ;;
+    --create|-n|--open|-o|--dump|-p|--close|-c)
+      [ -z "$ACTION" ] || Exit ": conflicting or duplicating {create|open|dump|close} options"
+      case "$1" in
+        --create|-n) ACTION=0;;
+	--open|-o)   ACTION=1;;
+        --dump|-p)   ACTION=2;;
+        --close|-c)  ACTION=3;;
+      esac
+      DEV_MAP=$2
+      shift
+      ;;
+    --data|-d)
+      if [ -d "$2" ]; then
+        DIR_IMAGE="$2"; FILE_IMAGE="$3"; FS_TYPE=0; shift
+      elif [ -b "$2" ]; then
+	DEV_DATA=$2
+      elif [[ "$2" =~ "^[1-9][0-9]*[kKmMgG]?$" ]]; then
+        FILE_SIZE=${2/[gG]/*1024M}; FILE_SIZE=${FILE_SIZE/[mM]/*1024K}; FILE_SIZE=$((${FILE_SIZE/[kK]/*1024}))
+        FILE_IMAGE="$3"
+	shift
+      else
+        FILE_IMAGE="$2"
+      fi
+      shift
+      ;;
+    --mount|-m)
+      DIR_MOUNT="$2"
+      shift
+      ;;
+    --fstype|-t)
+      Fs_Type_Detect $2
+      shift
+      ;;
+    --key|-k)
+      FILE_KEY="$2"
+      shift
+      ;;
+    *)
+      Explain_And_Exit
+      ;;
+  esac
+  shift	# Check next parameters set
+done
+
+# - verify
+[[ "$ACTION" == [0123] && -n "$DEV_MAP" ]] || Exit ": action is not specified"
+[[ -z "$FILE_SIZE" || "$FILE_SIZE" =~ "^[1-9][0-9]*$" && $FILE_SIZE -ge 1474560 ]] || Exit ": fsize $FILE_SIZE is invalid or too small"	#TODO: clarify min fs size for ext3, vfat
+[ -z "$DEV_DATA" -o -b "$DEV_DATA" ] || Exit ": device $DEV_DATA is invalid"
+[ -z "$DIR_IMAGE" -o -d "$DIR_IMAGE" ] || Exit ": dir $DIR_IMAGE is not found"
+[ -z "$DIR_MOUNT" -o -d "$DIR_MOUNT" ] || Exit ": dir $DIR_MOUNT is not found"
+[ -z "$FILE_KEY" -o -s "$FILE_KEY" ] || Exit ": keyfile is empty or not found"
+[ $ACTION -eq 0 -o -z "$DIR_IMAGE" -a -z "$FILE_SIZE" ] || Exit ": some of excessive options are specified: sdir, fsize"
+[ $ACTION -ne 0 -o "$FS_TYPE" == "0" -o -z "$FS_TYPE" -o -n "$FILE_SIZE" -a -n "$FILE_IMAGE" -a -z "$DEV_DATA" -o -z "$FILE_SIZE" -a -z "$FILE_IMAGE" -a -n "$DEV_DATA" ] || Exit ": fsize and dev options are incompatible"
+[ $ACTION -ne 0 -o "$FS_TYPE" == "0" -o -z "$FS_TYPE" -o -z "$DIR_IMAGE" ] || Exit ": sdir option is for iso9660 fs only"
+[ $ACTION -ne 0 -o -n "$FS_TYPE" -a "$FS_TYPE" != "0" -o -n "$DIR_IMAGE" ] || Exit ": sdir option is not specified"
+[ $ACTION -ne 0 -o -n "$FS_TYPE" -a "$FS_TYPE" != "0" -o -z "$FILE_SIZE" ] || Exit ": fsize option is for non-iso9660 fs only"
+[ $ACTION -ne 1 -o -z "$FILE_IMAGE" -o -s "$FILE_IMAGE" ] || Exit ": ifile is empty or not found"
+[ $ACTION -gt 1 -o -n "$FILE_IMAGE" -o -n "$DEV_DATA" ] || Exit ": neither ifile, nor dev option is specified"
+[ $ACTION -gt 1 -o -n "$FS_TYPE" ] || Exit ": fstype option is not specified"
+[ $ACTION -gt 1 -o ! -b "/dev/mapper/$DEV_MAP" ] || Exit ": map already exists"
+[ $ACTION -gt 1 -o -n "$DIR_MOUNT" ] || Exit ": mdir option is not specified"
+[ $ACTION -lt 2 -o -z "$FS_TYPE" ] || Exit ": excessive fstype option is specified"
+[ $ACTION -lt 2 -o -b "/dev/mapper/$DEV_MAP" ] || Exit ": map is not found"
+[ $ACTION -lt 2 -o -z "$FILE_IMAGE" -a -z "$DIR_IMAGE" -a -z "$FILE_SIZE" -a -z "$DEV_DATA" -a -z "$DIR_MOUNT" -a -z "$FILE_KEY" ] || Exit ": some of excessive options are specified: ifile, sdir, fsize, dev, mdir, keyfile"
+
+# - defaults
+OPTS_MKFS=${A_OPTS_MKFS[$FS_TYPE]}
+[ -z "$FILE_KEY" -a $ACTION -lt 2 ] && Ask_Passphrase
+
+# execute
+
+if [ "$ACTION" == "0" -a "$FS_TYPE" == "0" ]; then
+
+  [ $(find "$DIR_IMAGE" -type d -iname VIDEO_TS) ] && OPTS_MKFS="-quiet -dvd-video" && Notify "dvd-video media type detected"
+
+  LUKS_Allocate ${A_ISO_MEDIA_SIZE[@]: -1}	# apply biggest size from last array element; call without option "-r"
+  LUKS_Format_And_Open $DEV_LOOP		# without option "--readonly"
+
+  # following sizes are in 512-bytes blocks
+  set -o pipefail
+  Notify "Estimated LUKS header size: " -n
+  LUKS_HEADER_SIZE=$(LANG=C cryptsetup luksDump $DEV_LOOP | grep '^Payload offset:' | egrep -o '[0-9]+$')
+  (($LUKS_HEADER_SIZE > 0)) && Notify "$(($LUKS_HEADER_SIZE * 512)) bytes" || Exit
+  
+  Notify "Estimated iso image size: " -n
+  ISO_IMAGE_SIZE=$(($(mkisofs $OPTS_MKFS -print-size -quiet "$DIR_IMAGE" 2> /dev/null) * 2048 / 512))	# convert 2048-blocks to 512-blocks
+  (($ISO_IMAGE_SIZE > 0)) && Notify "$(($ISO_IMAGE_SIZE * 512)) bytes" || Exit
+
+  LUKS_SIZE=$(($LUKS_HEADER_SIZE + $ISO_IMAGE_SIZE))
+  Notify "Estimated LUKS partition size: $(($LUKS_SIZE * 512)) bytes"
+  Notify "Estimated media size: " -n
+  for (( i=0 ; i < ${#A_ISO_MEDIA_SIZE[@]} ; ++i )) ; do
+    (($LUKS_SIZE <= ${A_ISO_MEDIA_SIZE[$i]} / 512)) && ISO_MEDIA_SIZE=$((${A_ISO_MEDIA_SIZE[$i]} / 512)) && break
+  done
+  [ -n "$ISO_MEDIA_SIZE" ] && Notify "$(($ISO_MEDIA_SIZE * 512)) bytes" || Exit
+
+  Notify "Make ${A_FS_TYPES[$FS_TYPE]} filesystem: " -n
+  mkisofs $OPTS_MKFS "$DIR_IMAGE" 2> /dev/null | dd of=/dev/mapper/$DEV_MAP bs=4k > /dev/null 2>&1 && Notify || Exit
+
+  Notify "Fill gap between iso fs end and iso media end by garbage: " -n
+  dd if=/dev/zero of=/dev/mapper/$DEV_MAP bs=512 count=$(($ISO_MEDIA_SIZE - $LUKS_SIZE)) seek=$LUKS_SIZE conv=notrunc > /dev/null 2>&1 && Notify || Exit
+
+  LUKS_Close
+
+  Notify "Truncate LUKS partition at $(($ISO_MEDIA_SIZE * 512)) byte: " -n
+  dd if="$FILE_IMAGE" of="$FILE_IMAGE" bs=512 count=0 skip=$ISO_MEDIA_SIZE seek=$ISO_MEDIA_SIZE > /dev/null 2>&1 && Notify || Exit
+
+  DevLoop_Init ${A_OPTS_LOSETUP[$FS_TYPE]}
+  LUKS_Open $DEV_LOOP ${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}
+
+  Notify "Verify iso9660 fs in /dev/mapper/$DEV_MAP: " -n
+  isovfy ${A_OPTS_FSCK[$FS_TYPE]} /dev/mapper/$DEV_MAP > /dev/null 2>&1 && Notify || Exit
+
+  LUKS_Mount
+
+elif [ "$ACTION" == "0" -a "$FS_TYPE" != "0" ]; then
+
+  if [ -n "$FILE_IMAGE" ]; then
+    LUKS_Allocate $FILE_SIZE ${A_OPTS_LOSETUP[$FS_TYPE]}
+  else
+    DEV_DATA_SS=$(blockdev --getss $DEV_DATA)
+    Notify "Try to make temp file: " -n
+    FILE_BADBLOCK_LIST=$(mktemp) && Notify || Exit
+    badblocks -b $DEV_DATA_SS -c 256 -s -t random -v -w $DEV_DATA > $FILE_BADBLOCK_LIST
+    [ -s "$FILE_BADBLOCK_LIST" ] && Notify "Warning: $(cat $FILE_BADBLOCK_LIST | wc -l) bad blocks found on $DEV_DATA" || rm -f $FILE_BADBLOCK_LIST && FILE_BADBLOCK_LIST=""
+    Notify "Randomize LUKS header"
+    dd if=/dev/urandom of=$DEV_DATA bs=$DEV_DATA_SS count=$((2056 * 512 / $DEV_DATA_SS)) > /dev/null 2>&1
+	# 2056x512 is max LUKS header length, corresponding to 256-bit keys
+  fi
+  LUKS_Format_And_Open ${DEV_LOOP:-$DEV_DATA} ${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}
+
+  Notify "Fill LUKS partition with random data..." -n
+  dd if=/dev/zero of=/dev/mapper/$DEV_MAP bs=4k > /dev/null 2>&1; Notify
+
+  Notify "Make ${A_FS_TYPES[$FS_TYPE]} filesystem: " -n
+  mkfs -t ${A_FS_TYPES[$FS_TYPE]} $OPTS_MKFS ${FILE_BADBLOCK_LIST:+ -l $FILE_BADBLOCK_LIST} /dev/mapper/$DEV_MAP && Notify || Exit
+  rm -f $FILE_BADBLOCK_LIST
+
+  (($FS_TYPE == 1)) && { Notify "Tune filesystem: " -n; tune2fs -c 0 -i 0 -m 0 /dev/mapper/$DEV_MAP && Notify || Exit; }
+
+  (($FS_TYPE != 2)) && { Notify "Check filesystem: " -n; fsck -t ${A_FS_TYPES[$FS_TYPE]} /dev/mapper/$DEV_MAP ${A_OPTS_FSCK[$FS_TYPE]} && Notify || Exit; }	#FIXME: dosfsck fails on map
+
+  LUKS_Mount
+
+elif (($ACTION == 1)); then
+
+  [ -n "$FILE_IMAGE" ] && DevLoop_Init ${A_OPTS_LOSETUP[$FS_TYPE]}
+  LUKS_Open ${DEV_LOOP:-$DEV_DATA} ${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}
+  LUKS_Mount
+
+elif (($ACTION == 2)); then
+
+  { for i in ls table status; do dmsetup $i; done; } 2>&1 | egrep "^$DEV_MAP[[:space:]]"
+  DEV_STATUS=$(cryptsetup status $DEV_MAP)
+  echo "$DEV_STATUS"
+  cryptsetup luksDump $(echo "$DEV_STATUS" | fgrep device: | egrep -o '[^[:space:]]+$')
+  DEV_LOOP=$(echo "$DEV_STATUS" | egrep -o '/dev/loop[0-9]+')
+  [ -n "$DEV_LOOP" ] && losetup $DEV_LOOP
+  Fs_Type_Detect $(guessfstype /dev/mapper/$DEV_MAP | egrep -o '[^[:space:]]+$')
+  case "$FS_TYPE" in
+    0) isoinfo -d -J -p -R -s -i /dev/mapper/$DEV_MAP;;
+    1) dumpe2fs /dev/mapper/$DEV_MAP;;
+  esac
+
+else
+
+  Notify "Umount LUKS partition: " -n
+  umount /dev/mapper/$DEV_MAP && Notify || Exit
+  DEV_LOOP=$(cryptsetup status $DEV_MAP | egrep -o '/dev/loop[0-9]+')
+  LUKS_Close
+
+fi
