@@ -5,13 +5,19 @@
 # location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: webadm at dvgu dot ru
-# version: 1.0.1
-# date: 2007-04-16
+# version: 1.0.3
+# date: 2007-04-21
 
 # config
-A_ISO_MEDIA_SIZE=(737280000 4700000000 9400000000)	# size (bytes) for CD, DVD, DVD DL respectively, in ascending order
-							# remove unacceptable sizes
-OPTS_CRYPTSETUP_FORMAT="--batch-mode"			# luksFormat options, "-c aes-cbc-essiv:sha256 -s 128" is default
+A_ISO_MEDIA_SIZE=($((4700372992-307200)))		# size (bytes) for CD, DVD, DVD DL respectively, in ascending order
+#A_ISO_MEDIA_SIZE=(737280000 4700000000 9400000000)	# size (bytes) for CD, DVD, DVD DL images respectively, in ascending order
+							# remove unacceptable sizes; consult with:
+							# - http://www.osta.org/technology/cdqa7.htm
+							# - http://www.osta.org/technology/dvdqa/dvdqa6.htm
+#A_ISO_MEDIA_SIZE=($((737280000-307200)) $((4700000000-307200)) $((9400000000-307200)))	# use this instead if Nero burner will
+							# be used, consult http://wiki.linuxquestions.org/wiki/Nero_CD_image
+OPTS_CRYPTSETUP_FORMAT="--batch-mode -s 256"		# luksFormat options, "-c aes-cbc-essiv:sha256 -s 128" is default
+#OPTS_CRYPTSETUP_FORMAT="--batch-mode"			# luksFormat options, "-c aes-cbc-essiv:sha256 -s 128" is default
 A_FS_TYPES=("iso9660" "ext3" "vfat")			# supported fstype names array
 A_OPTS_LOSETUP=("-r" "" "")				# fstype-specific losetup options, coherently to A_FS_TYPES
 A_OPTS_CRYPTSETUP_OPEN=("--readonly" "" "")		# fstype-specific luksOpen options, coherently to A_FS_TYPES
@@ -103,10 +109,10 @@ function Fs_Type_Detect () {
 function Ask_Passphrase () {
   local PASSPHRASE_2 TIMEOUT=300 MSG_TIMEOUT=": timeout exceeded"$'\x0a'
   read -p "Enter passphrase, please: " -s -t $TIMEOUT PASSPHRASE || Exit "$MSG_TIMEOUT"
-  [ -n "$PASSPHRASE" ] || Exit ": passphrase is empty"
+  [ -n "$PASSPHRASE" ] && echo || Exit ": passphrase is empty"
   if (($ACTION == 0)); then
     read -p "Verify passphrase, please: " -s -t $TIMEOUT PASSPHRASE_2 || Exit "$MSG_TIMEOUT"
-    [ "$PASSPHRASE" == "$PASSPHRASE_2" ] || Exit ": passphrases are not match"
+    [ "$PASSPHRASE" == "$PASSPHRASE_2" ] && echo || Exit ": passphrases are not match"
   fi
 }
 
@@ -117,10 +123,10 @@ function DevLoop_Init () {
     for i in /dev/loop*; do
       if ! losetup $i > /dev/null 2>&1; then DEV_LOOP=$i; break; fi
     done
-    [ -n "$DEV_LOOP" ] && Notify || Exit
+    [ -n "$DEV_LOOP" ] && Notify "$DEV_LOOP" || Exit
   fi
   Notify "Attach file to loop device: " -n
-  losetup $1 $DEV_LOOP "$FILE_IMAGE" && Notify "$DEV_LOOP" || Exit
+  losetup $1 $DEV_LOOP "$FILE_IMAGE" && Notify || Exit
 }
 
 # fix cryptsetup bug: "device-mapper: ioctl: unable to remove open device temporary-cryptsetup-PID"
@@ -135,11 +141,11 @@ function Fix_Cryptsetup_Bug () {
 
 # create sparse file of size $1 bytes for LUKS partition, init loop device with option $2; requires global var $FILE_IMAGE
 function LUKS_Allocate () {
-  local FILE_SIZE_BLOCKS=$((($1 - 1) / 512 + 1))
+  local FILE_SIZE_BLOCKS=$(($1 / 512))	# round down by modulo 512 to fit media
   Notify "Allocate sparse file of size $(($FILE_SIZE_BLOCKS * 512)) bytes for LUKS device: " -n
-  dd if=/dev/urandom of="$FILE_IMAGE" bs=512 count=2056 > /dev/null 2>&1
+  dd if=/dev/urandom of="$FILE_IMAGE" bs=512 count=2056 2> /dev/null
     # 2056x512 is max LUKS header length, corresponding to 256-bit keys
-  dd if=/dev/urandom of="$FILE_IMAGE" bs=512 count=0 seek=$FILE_SIZE_BLOCKS > /dev/null 2>&1
+  dd if=/dev/urandom of="$FILE_IMAGE" bs=512 count=0 seek=$FILE_SIZE_BLOCKS 2> /dev/null
   [ -s "$FILE_IMAGE" ] && Notify || Exit
   DevLoop_Init $2
 }
@@ -149,7 +155,7 @@ function LUKS_Open () {
   Notify "Check LUKS device: " -n
   cryptsetup isLuks $1 && Notify || Exit
   Notify "Open LUKS partition: " -n
-  echo "$PASSPHRASE" | cryptsetup $2${FILE_KEY:+ --key-file "$FILE_KEY"} luksOpen $1 $DEV_MAP && Notify || Exit
+  echo "$PASSPHRASE" | cryptsetup $2${FILE_KEY:+ --key-file "$FILE_KEY"} luksOpen $1 $DEV_MAP || Exit
     # cryptsetup ignores stdin if "--key-file" option presented
   Fix_Cryptsetup_Bug
 }
@@ -157,7 +163,7 @@ function LUKS_Open () {
 # format LUKS partition $1; open it with options $2
 function LUKS_Format_And_Open () {
   Notify "Format LUKS device: " -n
-  echo "$PASSPHRASE" | cryptsetup $OPTS_CRYPTSETUP_FORMAT luksFormat $1 $FILE_KEY && Notify || Exit
+  echo "$PASSPHRASE" | cryptsetup $OPTS_CRYPTSETUP_FORMAT luksFormat $1 $FILE_KEY || Exit
     # $FILE_KEY must be without quotes! cryptsetup ignores stdin if keyfile presented
   LUKS_Open $1 $2
 }
@@ -288,15 +294,16 @@ if [ "$ACTION" == "0" -a "$FS_TYPE" == "0" ]; then
   [ -n "$ISO_MEDIA_SIZE" ] && Notify "$(($ISO_MEDIA_SIZE * 512)) bytes" || Exit
 
   Notify "Make ${A_FS_TYPES[$FS_TYPE]} filesystem: " -n
-  mkisofs $OPTS_MKFS "$DIR_IMAGE" 2> /dev/null | dd of=/dev/mapper/$DEV_MAP bs=4k > /dev/null 2>&1 && Notify || Exit
+  mkisofs $OPTS_MKFS "$DIR_IMAGE" 2> /dev/null | dd of=/dev/mapper/$DEV_MAP bs=4k 2> /dev/null && Notify || Exit
 
   Notify "Fill gap between iso fs end and iso media end by garbage: " -n
-  dd if=/dev/zero of=/dev/mapper/$DEV_MAP bs=512 count=$(($ISO_MEDIA_SIZE - $LUKS_SIZE)) seek=$LUKS_SIZE conv=notrunc > /dev/null 2>&1 && Notify || Exit
+  dd if=/dev/zero of=/dev/mapper/$DEV_MAP bs=512 count=$(($ISO_MEDIA_SIZE - $LUKS_SIZE)) seek=$ISO_IMAGE_SIZE conv=notrunc 2> /dev/null && Notify || Exit
 
-  LUKS_Close
+  Notify "Close LUKS partition, release loop device: " -n
+  LUKS_Close; Notify
 
   Notify "Truncate LUKS partition at $(($ISO_MEDIA_SIZE * 512)) byte: " -n
-  dd if="$FILE_IMAGE" of="$FILE_IMAGE" bs=512 count=0 skip=$ISO_MEDIA_SIZE seek=$ISO_MEDIA_SIZE > /dev/null 2>&1 && Notify || Exit
+  dd if="$FILE_IMAGE" of="$FILE_IMAGE" bs=512 count=0 skip=$ISO_MEDIA_SIZE seek=$ISO_MEDIA_SIZE 2> /dev/null && Notify || Exit
 
   DevLoop_Init ${A_OPTS_LOSETUP[$FS_TYPE]}
   LUKS_Open $DEV_LOOP ${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}
@@ -317,13 +324,13 @@ elif [ "$ACTION" == "0" -a "$FS_TYPE" != "0" ]; then
     badblocks -b $DEV_DATA_SS -c 256 -s -t random -v -w $DEV_DATA > $FILE_BADBLOCK_LIST
     [ -s "$FILE_BADBLOCK_LIST" ] && Notify "Warning: $(cat $FILE_BADBLOCK_LIST | wc -l) bad blocks found on $DEV_DATA" || rm -f $FILE_BADBLOCK_LIST && FILE_BADBLOCK_LIST=""
     Notify "Randomize LUKS header"
-    dd if=/dev/urandom of=$DEV_DATA bs=$DEV_DATA_SS count=$((2056 * 512 / $DEV_DATA_SS)) > /dev/null 2>&1
+    dd if=/dev/urandom of=$DEV_DATA bs=$DEV_DATA_SS count=$((2056 * 512 / $DEV_DATA_SS)) 2> /dev/null
 	# 2056x512 is max LUKS header length, corresponding to 256-bit keys
   fi
   LUKS_Format_And_Open ${DEV_LOOP:-$DEV_DATA} ${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}
 
   Notify "Fill LUKS partition with random data..." -n
-  dd if=/dev/zero of=/dev/mapper/$DEV_MAP bs=4k > /dev/null 2>&1; Notify
+  dd if=/dev/zero of=/dev/mapper/$DEV_MAP bs=4k 2> /dev/null; Notify
 
   Notify "Make ${A_FS_TYPES[$FS_TYPE]} filesystem: " -n
   mkfs -t ${A_FS_TYPES[$FS_TYPE]} $OPTS_MKFS ${FILE_BADBLOCK_LIST:+ -l $FILE_BADBLOCK_LIST} /dev/mapper/$DEV_MAP && Notify || Exit
