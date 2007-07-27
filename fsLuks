@@ -5,16 +5,15 @@
 # location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: webadm at dvgu dot ru
-# version: 1.0.3
-# date: 2007-04-21
+# version: 1.0.4
+# date: 2007-07-25
 
 # config
-A_ISO_MEDIA_SIZE=($((4700372992-307200)))		# size (bytes) for CD, DVD, DVD DL respectively, in ascending order
-#A_ISO_MEDIA_SIZE=(737280000 4700000000 9400000000)	# size (bytes) for CD, DVD, DVD DL images respectively, in ascending order
+#A_ISO_MEDIA_SIZE=(737280000 4700372992 $((4700372992*2)))	# size (bytes) for CD, DVD, DVD DL images respectively, in ascending order
 							# remove unacceptable sizes; consult with:
 							# - http://www.osta.org/technology/cdqa7.htm
 							# - http://www.osta.org/technology/dvdqa/dvdqa6.htm
-#A_ISO_MEDIA_SIZE=($((737280000-307200)) $((4700000000-307200)) $((9400000000-307200)))	# use this instead if Nero burner will
+A_ISO_MEDIA_SIZE=($((737280000-307200)) $((4700372992-307200)) $((4700372992*2-307200)))	# use this instead if Nero burner will
 							# be used, consult http://wiki.linuxquestions.org/wiki/Nero_CD_image
 OPTS_CRYPTSETUP_FORMAT="--batch-mode -s 256"		# luksFormat options, "-c aes-cbc-essiv:sha256 -s 128" is default
 #OPTS_CRYPTSETUP_FORMAT="--batch-mode"			# luksFormat options, "-c aes-cbc-essiv:sha256 -s 128" is default
