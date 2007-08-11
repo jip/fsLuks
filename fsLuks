@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # fsLuks
-# {create|open|dump|close} LUKS partition in {device|file}
+# {build|open|print|close} LUKS partition in {device|file}
 # location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: webadm at dvgu dot ru
-# version: 1.0.4
-# date: 2007-07-25
+# version: 1.0.5
+# date: 2007-07-27
 
 # config
 #A_ISO_MEDIA_SIZE=(737280000 4700372992 $((4700372992*2)))	# size (bytes) for CD, DVD, DVD DL images respectively, in ascending order
@@ -34,51 +34,53 @@ A_OPTS_MOUNT=(						# fstype-specific mount options, coherently to A_FS_TYPES
 
 # vars
 DEV_LOOP=""						# loop device
-ACTION=""						# create=0, open=1, dump=2, close=3
+ACTION=""						# build=0, open=1, print=2, close=3
 
 # functions
 
 function Explain_And_Exit () {
   local SCRIPT_NAME=$(basename $0)
-  echo  "{create|open|dump|close} LUKS partition in {device|file}
+  echo  "{build|open|print|close} LUKS partition in {device|file}
 
 Usage:
     $SCRIPT_NAME [{--help|-h|-?}] [{--verbose|-v}] options_and_parameters
 
 Options and parameters:
-    --create map, -n map
-	Create new LUKS partition and assign it to /dev/mapper/map
+    --build map, -b map
+	Build new LUKS partition and assign it to /dev/mapper/map
     --open map, -o map
 	Open existing LUKS partition and assign it to /dev/mapper/map
-    --dump map, -p map
-	Dump various meta information about LUKS partition assigned to /dev/mapper/map
+    --print map, -p map
+	Print various meta information about LUKS partition assigned to /dev/mapper/map
     --close map, -c map
 	Umount /dev/mapper/map and close LUKS partition
     --data, -d
 	Some LUKS partition data parameters, action-dependent:
 	--data sdir ifile
-	    Create iso9660 LUKS partition in ifile image file from sdir source directory.
-	    ifile size will be one of: ${A_ISO_MEDIA_SIZE[@]} (bytes)
+	    Build new iso9660 LUKS partition in ifile image file from sdir source directory.
+	    ifile size will be one of: ${A_ISO_MEDIA_SIZE[@]} (bytes).
+	    ifile must not exist.
 	--data fsize ifile
-	    Create non-iso9660 LUKS partition in ifile image file of size fsize (bytes). fsize may
+	    Build new non-iso9660 LUKS partition in ifile image file of size fsize (bytes). fsize may
 	    have optional case-insensitive multiplicative suffix: K 1024, M 1024*1024, G 1024*1024*1024
+	    ifile must not exist.
 	--data dev
-	    Create non-iso9660 or open or dump or close LUKS partition in dev device
+	    Build non-iso9660 or open or print or close LUKS partition in dev device
 	--data ifile
-	    Open or dump or close LUKS partition in ifile image file
+	    Open or print or close LUKS partition in ifile image file
     --mount mdir, -m mdir
-	Mount LUKS partition to mdir directory. Required for create or open action
+	Mount LUKS partition to mdir directory. Required for 'build' or 'open' action
     --fstype fsname, -t fsname
-	Filesystem type name. Required for create or open action. May be one of: ${A_FS_TYPES[@]}
+	Filesystem type name. Required for 'build' or 'open' action. May be one of: ${A_FS_TYPES[@]}
     --key kfile, -k kfile
-	Passphrase containing file. Required for create or open action. if not specified, passphrase will be asked
+	Passphrase containing file. Required for 'build' or 'open' action. if not specified, passphrase will be asked
 	
 Examples:
-    $SCRIPT_NAME --create cdrom --data /dir  iso.image  --mount /mnt --key secret.txt
-    $SCRIPT_NAME --create encfs --data 1440k vfat.image --mount /mnt --fstype vfat
-    $SCRIPT_NAME --create flash --data       /dev/sda1  --mount /mnt --fstype ext3
-    $SCRIPT_NAME --open   encfs --data       ext3.image --mount /mnt --fstype ext3
-    $SCRIPT_NAME --open   fd0   --data       /dev/fd0   --mount /mnt --fstype vfat" >&2
+    $SCRIPT_NAME --build cdrom --data /dir  iso.image  --mount /mnt --key secret.txt
+    $SCRIPT_NAME --build encfs --data 1440k vfat.image --mount /mnt --fstype vfat
+    $SCRIPT_NAME --build flash --data       /dev/sda1  --mount /mnt --fstype ext3
+    $SCRIPT_NAME --open  encfs --data       ext3.image --mount /mnt --fstype ext3
+    $SCRIPT_NAME --open  fd0   --data       /dev/fd0   --mount /mnt --fstype vfat" >&2
   exit 1
 }
 
@@ -89,7 +91,7 @@ function Exit () {
     LUKS_Close
     [ $ACTION -eq 0 -a -n "$FILE_IMAGE" ] && rm -f "$FILE_IMAGE"
   fi
-  exit 2;
+  exit 2
 }
 
 # print $1 or "Ok". if $2 != "-n" then print LF
@@ -196,13 +198,13 @@ while (($# > 0)); do
     --verbose|-v)
       VERBOSE=1
       ;;
-    --create|-n|--open|-o|--dump|-p|--close|-c)
-      [ -z "$ACTION" ] || Exit ": conflicting or duplicating {create|open|dump|close} options"
+    --build|-b|--open|-o|--print|-p|--close|-c)
+      [ -z "$ACTION" ] || Exit ": conflicting or duplicating {build|open|print|close} options"
       case "$1" in
-        --create|-n) ACTION=0;;
-	--open|-o)   ACTION=1;;
-        --dump|-p)   ACTION=2;;
-        --close|-c)  ACTION=3;;
+        --build|-b) ACTION=0;;
+	--open|-o)  ACTION=1;;
+        --print|-p) ACTION=2;;
+        --close|-c) ACTION=3;;
       esac
       DEV_MAP=$2
       shift
@@ -252,6 +254,7 @@ done
 [ $ACTION -ne 0 -o "$FS_TYPE" == "0" -o -z "$FS_TYPE" -o -z "$DIR_IMAGE" ] || Exit ": sdir option is for iso9660 fs only"
 [ $ACTION -ne 0 -o -n "$FS_TYPE" -a "$FS_TYPE" != "0" -o -n "$DIR_IMAGE" ] || Exit ": sdir option is not specified"
 [ $ACTION -ne 0 -o -n "$FS_TYPE" -a "$FS_TYPE" != "0" -o -z "$FILE_SIZE" ] || Exit ": fsize option is for non-iso9660 fs only"
+[ $ACTION -ne 0 -o -z "$FILE_IMAGE" -o ! -s "$FILE_IMAGE" ] || Exit ": ifile already exists"
 [ $ACTION -ne 1 -o -z "$FILE_IMAGE" -o -s "$FILE_IMAGE" ] || Exit ": ifile is empty or not found"
 [ $ACTION -gt 1 -o -n "$FILE_IMAGE" -o -n "$DEV_DATA" ] || Exit ": neither ifile, nor dev option is specified"
 [ $ACTION -gt 1 -o -n "$FS_TYPE" ] || Exit ": fstype option is not specified"
