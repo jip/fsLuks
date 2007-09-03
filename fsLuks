@@ -5,8 +5,8 @@
 # location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: webadm at dvgu dot ru
-# version: 1.0.5
-# date: 2007-07-27
+# version: 1.0.6
+# date: 2007-09-03
 
 # config
 #A_ISO_MEDIA_SIZE=(737280000 4700372992 $((4700372992*2)))	# size (bytes) for CD, DVD, DVD DL images respectively, in ascending order
@@ -331,14 +331,14 @@ elif [ "$ACTION" == "0" -a "$FS_TYPE" != "0" ]; then
   fi
   LUKS_Format_And_Open ${DEV_LOOP:-$DEV_DATA} ${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}
 
-  Notify "Fill LUKS partition with random data..." -n
+  Notify "Fill LUKS partition with random data... " -n
   dd if=/dev/zero of=/dev/mapper/$DEV_MAP bs=4k 2> /dev/null; Notify
 
   Notify "Make ${A_FS_TYPES[$FS_TYPE]} filesystem: " -n
   mkfs -t ${A_FS_TYPES[$FS_TYPE]} $OPTS_MKFS ${FILE_BADBLOCK_LIST:+ -l $FILE_BADBLOCK_LIST} /dev/mapper/$DEV_MAP && Notify || Exit
   rm -f $FILE_BADBLOCK_LIST
 
-  (($FS_TYPE == 1)) && { Notify "Tune filesystem: " -n; tune2fs -c 0 -i 0 -m 0 /dev/mapper/$DEV_MAP && Notify || Exit; }
+  (($FS_TYPE == 1)) && { Notify "Tune filesystem: " -n; tune2fs -m 0 /dev/mapper/$DEV_MAP && Notify || Exit; }
 
   (($FS_TYPE != 2)) && { Notify "Check filesystem: " -n; fsck -t ${A_FS_TYPES[$FS_TYPE]} /dev/mapper/$DEV_MAP ${A_OPTS_FSCK[$FS_TYPE]} && Notify || Exit; }	#FIXME: dosfsck fails on map
 
