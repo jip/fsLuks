@@ -5,36 +5,36 @@
 # location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: webadm at dvgu dot ru
-# version: 1.0.6
-# date: 2007-09-03
+# version: 1.0.7
+# date: 2007-09-08
 
 # config
-#A_ISO_MEDIA_SIZE=(737280000 4700372992 $((4700372992*2)))	# size (bytes) for CD, DVD, DVD DL images respectively, in ascending order
-							# remove unacceptable sizes; consult with:
-							# - http://www.osta.org/technology/cdqa7.htm
-							# - http://www.osta.org/technology/dvdqa/dvdqa6.htm
-A_ISO_MEDIA_SIZE=($((737280000-307200)) $((4700372992-307200)) $((4700372992*2-307200)))	# use this instead if Nero burner will
-							# be used, consult http://wiki.linuxquestions.org/wiki/Nero_CD_image
-OPTS_CRYPTSETUP_FORMAT="--batch-mode -s 256"		# luksFormat options, "-c aes-cbc-essiv:sha256 -s 128" is default
-#OPTS_CRYPTSETUP_FORMAT="--batch-mode"			# luksFormat options, "-c aes-cbc-essiv:sha256 -s 128" is default
-A_FS_TYPES=("iso9660" "ext3" "vfat")			# supported fstype names array
-A_OPTS_LOSETUP=("-r" "" "")				# fstype-specific losetup options, coherently to A_FS_TYPES
-A_OPTS_CRYPTSETUP_OPEN=("--readonly" "" "")		# fstype-specific luksOpen options, coherently to A_FS_TYPES
-A_OPTS_MKFS=(						# fstype-specific mkfs options, coherently to A_FS_TYPES
+ADJUST_2_NERO=307200				# will Nero burner be used? yes=307200, no=0
+						# consult http://wiki.linuxquestions.org/wiki/Nero_CD_image
+A_ISO_MEDIA_SIZE=($((737280000-$ADJUST_2_NERO)) $((4700372992-$ADJUST_2_NERO)) $((4700372992*2-$ADJUST_2_NERO)))
+						# size (bytes) for CD, DVD, DVD DL images respectively, in ascending order
+						# remove unacceptable sizes; consult with:
+						# - http://www.osta.org/technology/cdqa7.htm
+						# - http://www.osta.org/technology/dvdqa/dvdqa6.htm
+OPTS_CRYPTSETUP_FORMAT="--batch-mode -s 256"	# luksFormat options, default is "-c aes-cbc-essiv:sha256 -s 128"
+A_FS_TYPES=("iso9660" "ext3" "vfat")		# supported fstype names array
+A_OPTS_LOSETUP=("-r" "" "")			# fstype-specific losetup options, coherently to A_FS_TYPES
+A_OPTS_CRYPTSETUP_OPEN=("--readonly" "" "")	# fstype-specific luksOpen options, coherently to A_FS_TYPES
+A_OPTS_MKFS=(					# fstype-specific mkfs options, coherently to A_FS_TYPES
   "-quiet -allow-leading-dots -joliet-long -iso-level 3 -l -J -r"
   ""
   "-F 32"
 )
-A_OPTS_FSCK=("" "" "-- -atvV")				# fstype-specific fsck options, coherently to A_FS_TYPES
-A_OPTS_MOUNT=(						# fstype-specific mount options, coherently to A_FS_TYPES
+A_OPTS_FSCK=("" "" "-- -atvV")			# fstype-specific fsck options, coherently to A_FS_TYPES
+A_OPTS_MOUNT=(					# fstype-specific mount options, coherently to A_FS_TYPES
   "-o iocharset=utf8,noatime,nodev,noexec,nosuid,ro,unhide,utf8"
   ""
   "-o async,codepage=866,dmask=0022,fmask=0133,iocharset=utf8,nodev,noexec,nosuid,showexec,shortname=lower,utf8"
 )
 
 # vars
-DEV_LOOP=""						# loop device
-ACTION=""						# build=0, open=1, print=2, close=3
+DEV_LOOP=""					# loop device
+ACTION=""					# build=0, open=1, print=2, close=3
 
 # functions
 
