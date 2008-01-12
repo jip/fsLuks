@@ -5,7 +5,7 @@
 # location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: webadm at dvgu dot ru
-# version: 1.0.7
+# version: 1.0.8
 # date: 2007-09-08
 
 # config
@@ -28,7 +28,7 @@ A_OPTS_MKFS=(					# fstype-specific mkfs options, coherently to A_FS_TYPES
 A_OPTS_FSCK=("" "" "-- -atvV")			# fstype-specific fsck options, coherently to A_FS_TYPES
 A_OPTS_MOUNT=(					# fstype-specific mount options, coherently to A_FS_TYPES
   "-o iocharset=utf8,noatime,nodev,noexec,nosuid,ro,unhide,utf8"
-  ""
+  "-o acl,user_xattr"
   "-o async,codepage=866,dmask=0022,fmask=0133,iocharset=utf8,nodev,noexec,nosuid,showexec,shortname=lower,utf8"
 )
 
