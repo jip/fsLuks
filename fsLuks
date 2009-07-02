@@ -5,8 +5,8 @@
 # location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: webadm at dvgu dot ru
-# version: 1.1.0
-# date: 2009-02-05
+# version: 1.1.1
+# date: 2009-07-02
 
 # config
 ADJUST_2_NERO=0					# will Nero burner be used? yes=307200, no=0
@@ -16,7 +16,8 @@ A_ISO_MEDIA_SIZE=($((737280000-$ADJUST_2_NERO)) $((4700372992-$ADJUST_2_NERO)) $
 						# remove unacceptable sizes; consult with:
 						# - http://www.osta.org/technology/cdqa7.htm
 						# - http://www.osta.org/technology/dvdqa/dvdqa6.htm
-OPTS_CRYPTSETUP_FORMAT="--batch-mode -s 256"	# luksFormat options, default is "-c aes-cbc-essiv:sha256 -s 128"
+OPTS_CRYPTSETUP_FORMAT="--batch-mode -c aes-xts-benbi -s 512"	# luksFormat options, default is "-c aes-cbc-essiv:sha256 -s 128"
+KEY_SIZE=512					# key size, bits, coherently to OPTS_CRYPTSETUP_FORMAT
 A_FS_TYPES=("iso9660" "ext3" "vfat" "swap")	# supported fstype names array
 A_OPTS_LOSETUP=("-r" "" "" "")			# fstype-specific losetup options, coherently to A_FS_TYPES
 A_OPTS_CRYPTSETUP_OPEN=("--readonly" "" "" "")	# fstype-specific luksOpen options, coherently to A_FS_TYPES
@@ -37,6 +38,12 @@ A_OPTS_MOUNT=(					# fstype-specific mount/swapon options, coherently to A_FS_TY
 # vars
 DEV_LOOP=""					# loop device
 ACTION=""					# build=0, open=1, print=2, close=3
+HDR_LENGTH=$(((((($KEY_SIZE/8*4000)-1)/4096+1)*4096*8+((592-1)/4096+1)*4096)/512))	# LUKS header length in 512-bytes blocks, where:
+						#   $KEY_SIZE/8         - key size, bytes
+						#   4000                - AF stripe, bytes
+						#   8                   - key slotes
+						#   592                 - phdr size, bytes
+						#   ((x-1)/4096+1)*4096 - ceiling function with modulo 0x1000
 
 # functions
 
@@ -149,8 +156,7 @@ function Fix_Cryptsetup_Bug () {
 function LUKS_Allocate () {
   local FILE_SIZE_BLOCKS=$(($1 / 512))	# round down by modulo 512 to fit media
   Notify "Allocate sparse file of size $(($FILE_SIZE_BLOCKS * 512)) bytes for LUKS device: " -n
-  dd if=/dev/urandom of="$FILE_IMAGE" bs=512 count=2056 2> /dev/null
-    # 2056x512 is max LUKS header length, corresponding to 256-bit keys
+  dd if=/dev/urandom of="$FILE_IMAGE" bs=512 count=$HDR_LENGTH 2> /dev/null
   dd if=/dev/urandom of="$FILE_IMAGE" bs=512 count=0 seek=$FILE_SIZE_BLOCKS 2> /dev/null
   [ -s "$FILE_IMAGE" ] && Notify || Exit
   DevLoop_Init $2
@@ -161,8 +167,9 @@ function LUKS_Open () {
   Notify "Check LUKS device: " -n
   cryptsetup isLuks $1 && Notify || Exit
   Notify "Open LUKS partition: " -n
-  echo "$PASSPHRASE" | cryptsetup $2${FILE_KEY:+ --key-file "$FILE_KEY"} luksOpen $1 $DEV_MAP || Exit
+  echo "$PASSPHRASE" | cryptsetup $2${FILE_KEY:+ --key-file "$FILE_KEY"} luksOpen $1 $DEV_MAP
     # cryptsetup ignores stdin if "--key-file" option presented
+  [ -e "/dev/mapper/$DEV_MAP" ] || Exit
   Fix_Cryptsetup_Bug
 }
 
@@ -171,7 +178,7 @@ function LUKS_Format_And_Open () {
   Notify "Format LUKS device: " -n
   echo "$PASSPHRASE" | cryptsetup $OPTS_CRYPTSETUP_FORMAT luksFormat $1 $FILE_KEY || Exit
     # $FILE_KEY must be without quotes! cryptsetup ignores stdin if keyfile presented
-  LUKS_Open $1 $2
+  LUKS_Open $1 "$2"
 }
 
 # requires global vars: $FS_TYPE, $DEV_MAP, $DIR_MOUNT (last for non-swap only)
@@ -317,8 +324,8 @@ if [ "$ACTION" == "0" -a "$FS_TYPE" == "0" ]; then
   Notify "Truncate LUKS partition at $(($ISO_MEDIA_SIZE * 512)) byte: " -n
   dd if="$FILE_IMAGE" of="$FILE_IMAGE" bs=512 count=0 skip=$ISO_MEDIA_SIZE seek=$ISO_MEDIA_SIZE 2> /dev/null && Notify || Exit
 
-  DevLoop_Init ${A_OPTS_LOSETUP[$FS_TYPE]}
-  LUKS_Open $DEV_LOOP ${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}
+  DevLoop_Init "${A_OPTS_LOSETUP[$FS_TYPE]}"
+  LUKS_Open $DEV_LOOP "${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}"
 
   Notify "Verify iso9660 fs in /dev/mapper/$DEV_MAP: " -n
   isovfy ${A_OPTS_FSCK[$FS_TYPE]} /dev/mapper/$DEV_MAP &> /dev/null && Notify || Exit
@@ -328,7 +335,7 @@ if [ "$ACTION" == "0" -a "$FS_TYPE" == "0" ]; then
 elif [ "$ACTION" == "0" -a "$FS_TYPE" != "0" ]; then
 
   if [ -n "$FILE_IMAGE" ]; then
-    LUKS_Allocate $FILE_SIZE ${A_OPTS_LOSETUP[$FS_TYPE]}
+    LUKS_Allocate $FILE_SIZE "${A_OPTS_LOSETUP[$FS_TYPE]}"
   else
     DEV_DATA_SS=$(blockdev --getss $DEV_DATA)
     if (($FS_TYPE != 3)); then
@@ -338,10 +345,9 @@ elif [ "$ACTION" == "0" -a "$FS_TYPE" != "0" ]; then
       [ -s "$FILE_BADBLOCK_LIST" ] && Notify "Warning: $(cat $FILE_BADBLOCK_LIST | wc -l) bad blocks found on $DEV_DATA" || rm -f $FILE_BADBLOCK_LIST && FILE_BADBLOCK_LIST=""
     fi
     Notify "Randomize LUKS header"
-    dd if=/dev/urandom of=$DEV_DATA bs=$DEV_DATA_SS count=$((2056 * 512 / $DEV_DATA_SS)) 2> /dev/null
-        # 2056x512 is max LUKS header length, corresponding to 256-bit keys
+    dd if=/dev/urandom of=$DEV_DATA bs=$DEV_DATA_SS count=$(($HDR_LENGTH * 512 / $DEV_DATA_SS)) 2> /dev/null
   fi
-  LUKS_Format_And_Open ${DEV_LOOP:-$DEV_DATA} ${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}
+  LUKS_Format_And_Open ${DEV_LOOP:-$DEV_DATA} "${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}"
 
   Notify "Fill LUKS partition with random data... " -n
   dd if=/dev/zero of=/dev/mapper/$DEV_MAP bs=4k 2> /dev/null; Notify
@@ -349,7 +355,6 @@ elif [ "$ACTION" == "0" -a "$FS_TYPE" != "0" ]; then
   Notify "Make ${A_FS_TYPES[$FS_TYPE]} filesystem: " -n
   if (($FS_TYPE == 3)); then
     mkswap $OPTS_MKFS /dev/mapper/$DEV_MAP && Notify || Exit
-    swapon /dev/mapper/$DEV_MAP &> /dev/null
   else
     mkfs -t ${A_FS_TYPES[$FS_TYPE]} $OPTS_MKFS ${FILE_BADBLOCK_LIST:+ -l $FILE_BADBLOCK_LIST} /dev/mapper/$DEV_MAP && Notify || Exit
     [ -n "$FILE_BADBLOCK_LIST" ] && rm -f $FILE_BADBLOCK_LIST
@@ -363,8 +368,8 @@ elif [ "$ACTION" == "0" -a "$FS_TYPE" != "0" ]; then
 
 elif (($ACTION == 1)); then
 
-  [ -n "$FILE_IMAGE" ] && DevLoop_Init ${A_OPTS_LOSETUP[$FS_TYPE]}
-  LUKS_Open ${DEV_LOOP:-$DEV_DATA} ${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}
+  [ -n "$FILE_IMAGE" ] && DevLoop_Init "${A_OPTS_LOSETUP[$FS_TYPE]}"
+  LUKS_Open ${DEV_LOOP:-$DEV_DATA} "${A_OPTS_CRYPTSETUP_OPEN[$FS_TYPE]}"
   LUKS_Mount
 
 elif (($ACTION == 2)); then
