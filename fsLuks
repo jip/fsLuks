@@ -4,9 +4,9 @@
 # {build|open|print|close} LUKS partition in {device|file}
 # location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
-# author: igor at uic dot dvgu dot ru
-# version: 1.1.4
-# date: 2012-07-14
+# author: zhuravlov.ip at ya dot ru
+# version: 1.1.5
+# date: 2014-05-09
 
 # config
 ADJUST_2_NERO=0					# will Nero burner be used? yes=307200, no=0
@@ -16,7 +16,7 @@ A_ISO_MEDIA_SIZE=($((737280000-$ADJUST_2_NERO)) $((4700372992-$ADJUST_2_NERO)) $
 						# respectively, in ascending order; update to your needs
 OPTS_CRYPTSETUP_FORMAT="--batch-mode -c aes-xts-benbi -s 512"	# luksFormat options, default is "-c aes-cbc-essiv:sha256 -s 128"
 KEY_SIZE=512					# key size, bits, coherently to OPTS_CRYPTSETUP_FORMAT
-A_FS_TYPES=("iso9660" "ext3" "vfat" "swap")	# supported fstype names array
+A_FS_TYPES=("iso9660" "ext4" "vfat" "swap")	# supported fstype names array
 A_OPTS_LOSETUP=("-r" "" "" "")			# fstype-specific losetup options, coherently to A_FS_TYPES
 A_OPTS_CRYPTSETUP_OPEN=("--readonly" "" "" "")	# fstype-specific luksOpen options, coherently to A_FS_TYPES
 A_OPTS_MKFS=(					# fstype-specific mkfs/mkswap options, coherently to A_FS_TYPES
@@ -86,9 +86,9 @@ Options and parameters:
 Examples:
     $SCRIPT_NAME --build cdrom --data /dir  iso.image  --mount /mnt               --key secret.txt
     $SCRIPT_NAME --build encfs --data 1440k vfat.image --mount /mnt --fstype vfat
-    $SCRIPT_NAME --build flash --data       /dev/sda1  --mount /mnt --fstype ext3
+    $SCRIPT_NAME --build flash --data       /dev/sda1  --mount /mnt --fstype ext4
     $SCRIPT_NAME --build swap  --data 512m  swap.image --mount none --fstype swap
-    $SCRIPT_NAME --open  encfs --data       ext3.image --mount /mnt --fstype ext3
+    $SCRIPT_NAME --open  encfs --data       ext4.image --mount /mnt --fstype ext4
     $SCRIPT_NAME --open  fd0   --data       /dev/fd0   --mount /mnt --fstype vfat
     $SCRIPT_NAME --open  swap  --data       /dev/sda2  --mount none --fstype swap --key secret.txt" >&2
   exit 1
@@ -259,7 +259,7 @@ done
 # - verify
 [[ "$ACTION" == [0123] && -n "$DEV_MAP" ]] || Exit ": action is not specified"
 PATTERN="^[1-9][0-9]*$"  # workaround of bash bug introduced in version 3.2
-[[ -z "$FILE_SIZE" || "$FILE_SIZE" =~ $PATTERN && $FILE_SIZE -ge 1474560 ]] || Exit ": fsize $FILE_SIZE is invalid or too small"	#TODO: clarify min fs size for ext3, vfat
+[[ -z "$FILE_SIZE" || "$FILE_SIZE" =~ $PATTERN && $FILE_SIZE -ge 1474560 ]] || Exit ": fsize $FILE_SIZE is invalid or too small"	#TODO: clarify min fs size for ext4, vfat
 [ -z "$DEV_DATA" -o -b "$DEV_DATA" -o -c "$DEV_DATA" ] || Exit ": device $DEV_DATA is invalid"
 [ -z "$DIR_IMAGE" -o -d "$DIR_IMAGE" ] || Exit ": dir $DIR_IMAGE is not found"
 [ -z "$DIR_MOUNT" -o -d "$DIR_MOUNT" -o "$FS_TYPE" == "3" ] || Exit ": dir $DIR_MOUNT is not found"
