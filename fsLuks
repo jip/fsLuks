@@ -2,11 +2,11 @@
 
 # fsLuks
 # {build|open|print|close} LUKS partition in {device|file}
-# location: http://www.dvgu.ru/forum/thread.php?threadid=1518&page=2#post43879
+# location: http://old.dvfu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: zhuravlov.ip at ya dot ru
-# version: 1.1.5
-# date: 2014-05-09
+# version: 1.1.6
+# date: 2017-10-30
 
 # config
 ADJUST_2_NERO=0					# will Nero burner be used? yes=307200, no=0
@@ -165,7 +165,7 @@ function LUKS_Open () {
   Notify "Check LUKS device: " -n
   cryptsetup isLuks $1 && Notify || Exit
   Notify "Open LUKS partition: " -n
-  echo "$PASSPHRASE" | cryptsetup $2${FILE_KEY:+ --key-file "$FILE_KEY"} luksOpen $1 $DEV_MAP
+  echo "$PASSPHRASE" | cryptsetup $2${FILE_KEY:+ --key-file "$FILE_KEY"} open --type luks $1 $DEV_MAP
     # cryptsetup ignores stdin if "--key-file" option presented
   [ -e "/dev/mapper/$DEV_MAP" ] && Notify || Exit
   Fix_Cryptsetup_Bug
