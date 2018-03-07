@@ -5,8 +5,8 @@
 # location: http://old.dvfu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: zhuravlov.ip at ya dot ru
-# version: 2.0.0
-# date: 2018-01-15
+# version: 2.0.1
+# date: 2018-03-07
 
 # config
 ADJUST_2_NERO=0					# will Nero burner be used? yes=307200, no=0
@@ -393,14 +393,14 @@ elif (($ACTION == 2)); then
   case "$FS_TYPE" in
     0) isoinfo -d -J -p -R -s -i /dev/mapper/$DEV_MAP;;
     1) dumpe2fs /dev/mapper/$DEV_MAP;;
-    3) swapon -s
+    3) swapon --show
   esac
 
 else
 
   Notify "Umount LUKS partition: " -n
   # since $FS_TYPE is undefined, detect swap type by another approach
-  if swapon -s | egrep -q "^/dev/"; then
+  if swapon --show --noheadings | egrep -q "^$(readlink -m /dev/mapper/$DEV_MAP)\b"; then
     swapoff /dev/mapper/$DEV_MAP && Notify || Exit
   else
     umount /dev/mapper/$DEV_MAP && Notify || Exit
