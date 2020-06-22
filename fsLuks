@@ -5,8 +5,8 @@
 # location: http://old.dvfu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: zhuravlov.ip at ya dot ru
-# version: 2.0.1
-# date: 2018-03-07
+# version: 2.0.2
+# date: 2020-06-22
 
 # config
 ADJUST_2_NERO=0					# will Nero burner be used? yes=307200, no=0
@@ -15,9 +15,9 @@ A_ISO_MEDIA_SIZE=($((737280000-$ADJUST_2_NERO)) $((4700372992-$ADJUST_2_NERO)) $
 						# size (bytes) for 'CD-ROM mode 1 (700 Mb)', 'DVD+R', 'DVD-R DL' images
 						# respectively, in ascending order; update to your needs
 A_OPTS_CRYPTSETUP_FORMAT=(			# luksFormat options, default is "-c aes-xts-plain64 -s 512", swap wants "-c aes-cbc-essiv:sha256 -s 256"
-  "--batch-mode -c aes-xts-benbi"
-  "--batch-mode -c aes-xts-benbi"
-  "--batch-mode -c aes-xts-benbi"
+  "--batch-mode -c aes-xts-plain64 -h sha512"
+  "--batch-mode -c aes-xts-plain64 -h sha512"
+  "--batch-mode -c aes-xts-plain64 -h sha512"
   "--batch-mode -c aes-cbc-essiv:sha256"
 )
 A_KEY_SIZE=(512 512 512 256)			# key size, bits, coherently to A_OPTS_CRYPTSETUP_FORMAT
