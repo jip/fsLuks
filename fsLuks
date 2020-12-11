@@ -5,8 +5,8 @@
 # location: http://old.dvfu.ru/forum/thread.php?threadid=1518&page=2#post43879
 # license: GNU GPL
 # author: zhuravlov.ip at ya dot ru
-# version: 2.0.2
-# date: 2020-06-22
+# version: 2.1.0
+# date: 2020-12-11
 
 # config
 ADJUST_2_NERO=0					# will Nero burner be used? yes=307200, no=0
@@ -140,14 +140,9 @@ function Ask_Passphrase () {
 # attach $FILE_IMAGE to free loop device with option $1, set global var $DEV_LOOP; requires global var $FILE_IMAGE
 function DevLoop_Init () {
   if [ -z "$DEV_LOOP" ]; then
-    Notify "Look for free loop device: " -n
-    for i in /dev/loop?; do
-      if ! losetup $i &> /dev/null; then DEV_LOOP=$i; break; fi
-    done
-    [ -n "$DEV_LOOP" ] && Notify "$DEV_LOOP" || Exit
+    Notify "Look for free loop device and attach file to it: " -n
+    DEV_LOOP=$(losetup $1 -f -L --show "$FILE_IMAGE") && Notify "$DEV_LOOP" || Exit
   fi
-  Notify "Attach file to loop device: " -n
-  losetup $1 $DEV_LOOP "$FILE_IMAGE" && Notify || Exit
 }
 
 # fix cryptsetup bug: "device-mapper: ioctl: unable to remove open device temporary-cryptsetup-PID"
