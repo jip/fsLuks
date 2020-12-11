@@ -2,10 +2,10 @@
 
 # fsLuks
 # {build|open|print|close} LUKS partition in {device|file}
-# location: http://old.dvfu.ru/forum/thread.php?threadid=1518&page=2#post43879
+# location: https://github.com/jip/fsLuks
 # license: GNU GPL
 # author: zhuravlov.ip at ya dot ru
-# version: 2.1.0
+# version: 2.1.1
 # date: 2020-12-11
 
 # config
